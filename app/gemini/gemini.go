@@ -17,7 +17,11 @@ import (
 
 const (
 	googleApiKeyEnv = "GOOGLE_API_KEY"
-	generativeModel = "gemini-2.0-flash"
+
+	// primaryModel is tried first. If it hits a 429 rate limit after retries,
+	// fallbackModel is used (it has a separate quota bucket on the free tier).
+	primaryModel  = "gemini-2.0-flash"
+	fallbackModel = "gemini-1.5-flash-8b"
 
 	roleModel = "model"
 	roleUser  = "user"
@@ -82,6 +86,16 @@ func sendWithRetry(ctx context.Context, cs *genai.ChatSession, msg string) (*gen
 	return nil, fmt.Errorf("gemini rate limit exceeded after retries: %w", err)
 }
 
+// tryWithModel attempts to send a chat message using the given model name.
+// Returns the response, the chat session, and any error.
+func tryWithModel(ctx context.Context, client *genai.Client, history []*genai.Content, modelName, msg string) (*genai.GenerateContentResponse, *genai.ChatSession, error) {
+	model := client.GenerativeModel(modelName)
+	cs := model.StartChat()
+	cs.History = history
+	res, err := sendWithRetry(ctx, cs, msg)
+	return res, cs, err
+}
+
 func InitiateChat(info ChatInfo, msg string) (string, error) {
 	ctx := context.Background()
 
@@ -91,24 +105,23 @@ func InitiateChat(info ChatInfo, msg string) (string, error) {
 	}
 	defer client.Close()
 
-	model := client.GenerativeModel(generativeModel)
-	cs := model.StartChat()
-	// NOTE: Do NOT pre-append the user message to cs.History here.
-	// cs.SendMessage() manages the conversation history automatically.
-	// Pre-appending before calling SendMessage causes the message to appear
-	// twice in the history, corrupting the conversation context.
-
-	res, err := sendWithRetry(ctx, cs, msg)
+	// Try primary model first; fall back to fallbackModel on rate-limit.
+	res, cs, err := tryWithModel(ctx, client, nil, primaryModel, msg)
 	if err != nil {
-		log.Println("Gemini SendMessage error:", err)
-		return "", fmt.Errorf("gemini error: %w", err)
+		if strings.Contains(err.Error(), "429") {
+			log.Printf("Primary model (%s) rate-limited, trying fallback (%s)...", primaryModel, fallbackModel)
+			res, cs, err = tryWithModel(ctx, client, nil, fallbackModel, msg)
+		}
+		if err != nil {
+			log.Println("Gemini SendMessage error:", err)
+			return "", fmt.Errorf("gemini error: %w", err)
+		}
 	}
 
 	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
 		return "", errors.New("empty response from Gemini")
 	}
 
-	// Save the chat session (history is now managed by the SDK internally).
 	chatsMu.Lock()
 	ChatsInfoPerUser[info] = cs
 	chatsMu.Unlock()
@@ -139,21 +152,24 @@ func SendMessage(ctx context.Context, info ChatInfo, msg string) (string, error)
 	}
 	defer client.Close()
 
-	model := client.GenerativeModel(generativeModel)
-	// Restore the chat session by reusing the existing history from the SDK session.
-	cs := model.StartChat()
-	cs.History = chatSession.History
-
-	res, err := sendWithRetry(ctx, cs, msg)
+	// Try primary model first; fall back to fallbackModel on rate-limit.
+	// Pass existing history so the conversation context is preserved.
+	res, cs, err := tryWithModel(ctx, client, chatSession.History, primaryModel, msg)
 	if err != nil {
-		return "", fmt.Errorf("gemini error: %w", err)
+		if strings.Contains(err.Error(), "429") {
+			log.Printf("Primary model (%s) rate-limited, trying fallback (%s)...", primaryModel, fallbackModel)
+			res, cs, err = tryWithModel(ctx, client, chatSession.History, fallbackModel, msg)
+		}
+		if err != nil {
+			return "", fmt.Errorf("gemini error: %w", err)
+		}
 	}
 
 	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
 		return "", errors.New("empty response from Gemini")
 	}
 
-	// The SDK has already updated cs.History via SendMessage — save it back.
+	// The SDK has updated cs.History via SendMessage — save it back.
 	chatsMu.Lock()
 	ChatsInfoPerUser[info] = cs
 	chatsMu.Unlock()
