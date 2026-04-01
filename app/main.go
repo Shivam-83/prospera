@@ -21,11 +21,11 @@ func main() {
 
 	// Configure CORS
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowMethods:     []string{"POST", "GET", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
-		AllowCredentials: true,
-	}))
+	AllowOrigins:     []string{"*"},
+	AllowMethods:     []string{"POST", "GET", "OPTIONS"},
+	AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
+	AllowCredentials: false,
+}))
 
 	// Endpoint to store user salary info
 	r.POST("/salary/benchmark", salary.PostSalaryBenchmarkHandler)
