@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"os"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -13,11 +14,6 @@ import (
 )
 
 func main() {
-	//err := godotenv.Load()
-	//if err != nil {
-	//	log.Fatal("Failed to load environment variables :", err)
-	//	return
-	//}
 
 	r := gin.Default()
 
@@ -25,8 +21,8 @@ func main() {
 
 	// Configure CORS
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:3000"},  // Frontend origin
-		AllowMethods:     []string{"POST", "GET", "OPTIONS"}, // Allow relevant methods
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"POST", "GET", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
 		AllowCredentials: true,
 	}))
@@ -35,13 +31,18 @@ func main() {
 	r.POST("/salary/benchmark", salary.PostSalaryBenchmarkHandler)
 	r.GET("/salary/benchmark", salary.GetSalaryBenchmarkHandler)
 
-	// Websocket endpoints to chat with Prospera
+	// Websocket endpoints
 	r.GET("/ws/salary", salary.SalaryChatWebsocketHandler)
 	r.GET("/ws/negotiation", negotiation.NegotiationChatWebsocketHandler)
 	r.GET("/ws/tips", tips.TipsChatWebsocketHandler)
 
-	// start server
-	err := r.Run(":8080")
+	// Dynamic port for Render
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	err := r.Run(":" + port)
 	if err != nil {
 		log.Fatalf("Could not start server: %s", err)
 	}
