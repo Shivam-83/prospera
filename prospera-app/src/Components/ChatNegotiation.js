@@ -15,6 +15,11 @@ const ChatNegotiation = () => {
 
   useEffect(() => {
     const storedUserId = localStorage.getItem("userId");
+    if (!storedUserId) {
+      alert("User session not found. Please start from the beginning.");
+      window.location.href = "/input-form";
+      return;
+    }
     const socket = new WebSocket(`wss://prospera-bnny.onrender.com/ws/negotiation?userID=${storedUserId}`);
 
     socket.onopen = () => {
