@@ -36,6 +36,8 @@ const Results = () => {
             
             if (!storedUserId) {
                 console.warn("userId not found in localStorage");
+                alert("Session expired. Please fill the form again.");
+                window.location.href = "/input-form";
                 return;
             }
 
@@ -58,6 +60,13 @@ const Results = () => {
                 });
             } catch (error) {
                 console.error("Error fetching salary data:", error);
+                if (error.response?.status === 404) {
+                    alert("Session data not found on server. Please fill the form again.");
+                    localStorage.removeItem("userId");
+                    window.location.href = "/input-form";
+                } else {
+                    alert("Error loading salary data. Please try again.");
+                }
             }
         };
 
