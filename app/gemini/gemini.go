@@ -15,7 +15,7 @@ import (
 
 const (
 	googleApiKeyEnv = "GOOGLE_API_KEY"
-	generativeModel = "gemini-1.5-flash"
+	generativeModel = "gemini-2.0-flash"
 
 	roleModel = "model"
 	roleUser  = "user"
