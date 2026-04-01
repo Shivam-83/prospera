@@ -24,6 +24,7 @@ func TipsChatWebsocketHandler(c *gin.Context) {
 	userDetails, ok := user.SalaryInfoPerUser[userID]
 	if !ok {
 		http.Error(c.Writer, "User not found", http.StatusBadRequest)
+		return
 	}
 
 	// Upgrade HTTP request to WebSocket

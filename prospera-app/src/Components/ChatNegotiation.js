@@ -48,6 +48,10 @@ const ChatNegotiation = () => {
   }, []);
 
   const handleSendMessage = () => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      alert('Chat connection is not open. Please go back and reopen the chat.');
+      return;
+    }
     if (message.trim()) {
       // Send user message via WebSocket
       ws.send(JSON.stringify({ message }));
