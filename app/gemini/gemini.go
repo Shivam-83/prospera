@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/google/uuid"
@@ -42,30 +44,61 @@ func NewChatInfo(userID string) ChatInfo {
 	return chatInfo
 }
 
+// newClient creates an authenticated Gemini API client.
+func newClient(ctx context.Context) (*genai.Client, error) {
+	apiKey := os.Getenv(googleApiKeyEnv)
+	if apiKey == "" {
+		return nil, errors.New("GOOGLE_API_KEY environment variable is not set")
+	}
+	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
+	}
+	return client, nil
+}
+
+// sendWithRetry calls cs.SendMessage and retries up to 3 times on 429 rate-limit errors.
+func sendWithRetry(ctx context.Context, cs *genai.ChatSession, msg string) (*genai.GenerateContentResponse, error) {
+	var res *genai.GenerateContentResponse
+	var err error
+
+	for attempt := 0; attempt < 3; attempt++ {
+		res, err = cs.SendMessage(ctx, genai.Text(msg))
+		if err == nil {
+			return res, nil
+		}
+		if !strings.Contains(err.Error(), "429") {
+			// Not a rate-limit error — no point retrying.
+			return nil, err
+		}
+		waitSec := time.Duration(3*(attempt+1)) * time.Second
+		log.Printf("Gemini rate limit hit (429), retrying in %v (attempt %d/3)...", waitSec, attempt+1)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(waitSec):
+		}
+	}
+	return nil, fmt.Errorf("gemini rate limit exceeded after retries: %w", err)
+}
+
 func InitiateChat(info ChatInfo, msg string) (string, error) {
 	ctx := context.Background()
 
-	apiKey := os.Getenv(googleApiKeyEnv)
-	if apiKey == "" {
-		return "", errors.New("GOOGLE_API_KEY environment variable is not set")
-	}
-
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+	client, err := newClient(ctx)
 	if err != nil {
-		// Return error instead of log.Fatal so we don't crash the server.
-		return "", fmt.Errorf("failed to create Gemini client: %w", err)
+		return "", err
 	}
 	defer client.Close()
 
 	model := client.GenerativeModel(generativeModel)
 	cs := model.StartChat()
+	// NOTE: Do NOT pre-append the user message to cs.History here.
+	// cs.SendMessage() manages the conversation history automatically.
+	// Pre-appending before calling SendMessage causes the message to appear
+	// twice in the history, corrupting the conversation context.
 
-	cs.History = append(
-		cs.History,
-		&genai.Content{Parts: []genai.Part{genai.Text(msg)}, Role: roleUser},
-	)
-
-	res, err := cs.SendMessage(ctx, genai.Text(msg))
+	res, err := sendWithRetry(ctx, cs, msg)
 	if err != nil {
 		log.Println("Gemini SendMessage error:", err)
 		return "", fmt.Errorf("gemini error: %w", err)
@@ -75,18 +108,12 @@ func InitiateChat(info ChatInfo, msg string) (string, error) {
 		return "", errors.New("empty response from Gemini")
 	}
 
-	cs.History = append(
-		cs.History,
-		&genai.Content{Parts: res.Candidates[0].Content.Parts, Role: roleModel},
-	)
-
+	// Save the chat session (history is now managed by the SDK internally).
 	chatsMu.Lock()
 	ChatsInfoPerUser[info] = cs
 	chatsMu.Unlock()
 
-	// Use type assertion to get plain string — NOT %#v which produces Go syntax.
 	resp := string(res.Candidates[0].Content.Parts[0].(genai.Text))
-
 	return resp, nil
 }
 
@@ -99,7 +126,6 @@ func SendMessage(ctx context.Context, info ChatInfo, msg string) (string, error)
 		return "", errors.New("no chat session found")
 	}
 
-	// Correct nil check — comparing the pointer value, not address-of-pointer.
 	if chatSession == nil {
 		log.Println("chatSession is nil for info:", info)
 		return "", errors.New("chat session is nil")
@@ -107,23 +133,18 @@ func SendMessage(ctx context.Context, info ChatInfo, msg string) (string, error)
 
 	log.Println("Sending follow-up message to Gemini, history length:", len(chatSession.History))
 
-	apiKey := os.Getenv(googleApiKeyEnv)
-	if apiKey == "" {
-		return "", errors.New("GOOGLE_API_KEY environment variable is not set")
-	}
-
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+	client, err := newClient(ctx)
 	if err != nil {
-		// Return error instead of log.Fatal so we don't crash the server.
-		return "", fmt.Errorf("failed to create Gemini client: %w", err)
+		return "", err
 	}
 	defer client.Close()
 
 	model := client.GenerativeModel(generativeModel)
+	// Restore the chat session by reusing the existing history from the SDK session.
 	cs := model.StartChat()
 	cs.History = chatSession.History
 
-	res, err := cs.SendMessage(ctx, genai.Text(msg))
+	res, err := sendWithRetry(ctx, cs, msg)
 	if err != nil {
 		return "", fmt.Errorf("gemini error: %w", err)
 	}
@@ -132,21 +153,11 @@ func SendMessage(ctx context.Context, info ChatInfo, msg string) (string, error)
 		return "", errors.New("empty response from Gemini")
 	}
 
-	chatSession.History = append(
-		chatSession.History,
-		&genai.Content{Parts: []genai.Part{genai.Text(msg)}, Role: roleUser},
-	)
-	chatSession.History = append(
-		chatSession.History,
-		&genai.Content{Parts: res.Candidates[0].Content.Parts, Role: roleModel},
-	)
-
+	// The SDK has already updated cs.History via SendMessage — save it back.
 	chatsMu.Lock()
-	ChatsInfoPerUser[info] = chatSession
+	ChatsInfoPerUser[info] = cs
 	chatsMu.Unlock()
 
-	// Use type assertion to get plain string — NOT %#v which produces Go syntax.
 	resp := string(res.Candidates[0].Content.Parts[0].(genai.Text))
-
 	return resp, nil
 }
