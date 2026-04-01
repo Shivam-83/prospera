@@ -18,7 +18,7 @@ import median from "../Assets/Median.png";
 
 const Results = () => {
     const [searchParams] = useSearchParams();
-    const userId = searchParams.get("userId"); // Get userId from query params
+    const API_BASE = process.env.REACT_APP_API_URL || "https://prospera-bnny.onrender.com";
 
     const [salaryData, setSalaryData] = useState({
         currentSalary: 0,
@@ -32,18 +32,25 @@ const Results = () => {
 
     useEffect(() => {
         const fetchSalaryData = async () => {
+            const storedUserId = localStorage.getItem("userId");
+            
+            if (!storedUserId) {
+                console.warn("userId not found in localStorage");
+                return;
+            }
+
             try {
-                const storedUserId = localStorage.getItem("userId");
+                console.log("Fetching salary data for userId:", storedUserId);
                 const response = await axios.get(
-                    `https://prospera-bnny.onrender.com/salary/benchmark?userId=${storedUserId}`
+                    `${API_BASE}/salary/benchmark?userId=${storedUserId}`
                 );
                 const data = response.data;
 
                 // Update state with data from the server
                 setSalaryData({
                     currentSalary: data.CurrentSalary,
-                    medianSalary: data.DesiredSalary, // Assuming this represents the median or desired salary
-                    minSalary: data.minSalary || 45000, // Example fallback values
+                    medianSalary: data.DesiredSalary,
+                    minSalary: data.minSalary || 45000,
                     maxSalary: data.maxSalary || 70000,
                     jobTitle: data.jobTitle,
                     location: data.Location,
@@ -54,11 +61,8 @@ const Results = () => {
             }
         };
 
-        // // Fetch data if userId is present
-        // if (userId) {
-            fetchSalaryData();
-        // }
-    }, [userId]);
+        fetchSalaryData();
+    }, [API_BASE]);
 
     // Data for the salary chart
     const graphData = [

@@ -106,10 +106,15 @@ const InputForm = () => {
       });
 
       const receivedUserId = response.data.userId;
+      if (!receivedUserId) {
+        alert("Error: No userId received from server");
+        return;
+      }
       localStorage.setItem("userId", receivedUserId); // Save userId in localStorage
 
       // Navigate or handle the response as needed
       console.log("Response from backend:", response.data);
+      console.log("Saved userId to localStorage:", receivedUserId);
       navigate("/chatsuggestions"); // Redirect if successful
 
     } catch (error) {
