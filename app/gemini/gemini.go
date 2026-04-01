@@ -1,30 +1,29 @@
 package gemini
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/generative-ai-go/genai"
 	"github.com/google/uuid"
-	"google.golang.org/api/option"
 )
 
 const (
+	// Keep the same environment variable name so you don't have to change it in Render,
+	// but paste your "sk-or-v1-..." OpenRouter key into it.
 	googleApiKeyEnv = "GOOGLE_API_KEY"
+	openRouterURL   = "https://openrouter.ai/api/v1/chat/completions"
 
-	// primaryModel is tried first. If it hits a 429 rate limit after retries,
-	// fallbackModel is used (it has a separate quota bucket on the free tier).
-	primaryModel  = "gemini-2.0-flash"
-	fallbackModel = "gemini-1.5-flash-8b"
-
-	roleModel = "model"
-	roleUser  = "user"
+	// OpenRouter completely free routing for Gemini models.
+	primaryModel = "google/gemini-2.0-flash-lite-preview-02-05:free"
 )
 
 type ChatInfo struct {
@@ -32,102 +31,119 @@ type ChatInfo struct {
 	sessionID string
 }
 
-// chatsMu protects ChatsInfoPerUser against concurrent WebSocket goroutines.
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type ChatSession struct {
+	History []Message
+}
+
+type OpenRouterRequest struct {
+	Model    string    `json:"model"`
+	Messages []Message `json:"messages"`
+}
+
+type OpenRouterResponse struct {
+	Choices []struct {
+		Message Message `json:"message"`
+	} `json:"choices"`
+}
+
 var (
-	ChatsInfoPerUser = map[ChatInfo]*genai.ChatSession{}
+	// ChatsInfoPerUser holds OpenRouter manual memory instances instead of genai.ChatSession
+	ChatsInfoPerUser = map[ChatInfo]*ChatSession{}
 	chatsMu          sync.RWMutex
+	httpClient       = &http.Client{Timeout: 30 * time.Second}
 )
 
 func NewChatInfo(userID string) ChatInfo {
 	chatInfo := ChatInfo{userID: userID, sessionID: uuid.NewString()}
 
 	chatsMu.Lock()
-	ChatsInfoPerUser[chatInfo] = &genai.ChatSession{}
+	ChatsInfoPerUser[chatInfo] = &ChatSession{
+		History: []Message{},
+	}
 	chatsMu.Unlock()
 
 	return chatInfo
 }
 
-// newClient creates an authenticated Gemini API client.
-func newClient(ctx context.Context) (*genai.Client, error) {
+func sendToOpenRouter(ctx context.Context, history []Message) (Message, error) {
 	apiKey := os.Getenv(googleApiKeyEnv)
 	if apiKey == "" {
-		return nil, errors.New("GOOGLE_API_KEY environment variable is not set")
+		return Message{}, errors.New("GOOGLE_API_KEY environment variable is not set with OpenRouter key")
 	}
-	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
+
+	reqBody := OpenRouterRequest{
+		Model:    primaryModel,
+		Messages: history,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
+		return Message{}, fmt.Errorf("failed to marshal request: %w", err)
 	}
-	return client, nil
-}
 
-// sendWithRetry calls cs.SendMessage and retries up to 3 times on 429 rate-limit errors.
-func sendWithRetry(ctx context.Context, cs *genai.ChatSession, msg string) (*genai.GenerateContentResponse, error) {
-	var res *genai.GenerateContentResponse
-	var err error
-
-	for attempt := 0; attempt < 3; attempt++ {
-		res, err = cs.SendMessage(ctx, genai.Text(msg))
-		if err == nil {
-			return res, nil
-		}
-		if !strings.Contains(err.Error(), "429") {
-			// Not a rate-limit error — no point retrying.
-			return nil, err
-		}
-		waitSec := time.Duration(3*(attempt+1)) * time.Second
-		log.Printf("Gemini rate limit hit (429), retrying in %v (attempt %d/3)...", waitSec, attempt+1)
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(waitSec):
-		}
+	req, err := http.NewRequestWithContext(ctx, "POST", openRouterURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return Message{}, err
 	}
-	return nil, fmt.Errorf("gemini rate limit exceeded after retries: %w", err)
-}
 
-// tryWithModel attempts to send a chat message using the given model name.
-// Returns the response, the chat session, and any error.
-func tryWithModel(ctx context.Context, client *genai.Client, history []*genai.Content, modelName, msg string) (*genai.GenerateContentResponse, *genai.ChatSession, error) {
-	model := client.GenerativeModel(modelName)
-	cs := model.StartChat()
-	cs.History = history
-	res, err := sendWithRetry(ctx, cs, msg)
-	return res, cs, err
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("HTTP-Referer", "https://prospera-bnny.onrender.com")
+	req.Header.Set("X-Title", "Prospera AI Coach")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return Message{}, fmt.Errorf("openrouter request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		return Message{}, fmt.Errorf("openrouter returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var orResp OpenRouterResponse
+	if err := json.Unmarshal(bodyBytes, &orResp); err != nil {
+		return Message{}, fmt.Errorf("failed to parse openrouter response: %w (%s)", err, string(bodyBytes))
+	}
+
+	if len(orResp.Choices) == 0 {
+		return Message{}, errors.New("empty choices from openrouter")
+	}
+
+	return orResp.Choices[0].Message, nil
 }
 
 func InitiateChat(info ChatInfo, msg string) (string, error) {
 	ctx := context.Background()
 
-	client, err := newClient(ctx)
+	// 1. Initial history with the user's message
+	history := []Message{
+		{Role: "user", Content: msg},
+	}
+
+	// 2. Send to OpenRouter
+	aiMsg, err := sendToOpenRouter(ctx, history)
 	if err != nil {
+		log.Println("OpenRouter InitiateChat error:", err)
 		return "", err
 	}
-	defer client.Close()
 
-	// Try primary model first; fall back to fallbackModel on rate-limit.
-	res, cs, err := tryWithModel(ctx, client, nil, primaryModel, msg)
-	if err != nil {
-		if strings.Contains(err.Error(), "429") {
-			log.Printf("Primary model (%s) rate-limited, trying fallback (%s)...", primaryModel, fallbackModel)
-			res, cs, err = tryWithModel(ctx, client, nil, fallbackModel, msg)
-		}
-		if err != nil {
-			log.Println("Gemini SendMessage error:", err)
-			return "", fmt.Errorf("gemini error: %w", err)
-		}
-	}
+	// 3. Append the AI's response to the history
+	history = append(history, aiMsg)
 
-	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
-		return "", errors.New("empty response from Gemini")
-	}
-
+	// 4. Save session
 	chatsMu.Lock()
-	ChatsInfoPerUser[info] = cs
+	ChatsInfoPerUser[info] = &ChatSession{History: history}
 	chatsMu.Unlock()
 
-	resp := string(res.Candidates[0].Content.Parts[0].(genai.Text))
-	return resp, nil
+	return aiMsg.Content, nil
 }
 
 func SendMessage(ctx context.Context, info ChatInfo, msg string) (string, error) {
@@ -135,45 +151,28 @@ func SendMessage(ctx context.Context, info ChatInfo, msg string) (string, error)
 	chatSession, ok := ChatsInfoPerUser[info]
 	chatsMu.RUnlock()
 
-	if !ok {
+	if !ok || chatSession == nil {
 		return "", errors.New("no chat session found")
 	}
 
-	if chatSession == nil {
-		log.Println("chatSession is nil for info:", info)
-		return "", errors.New("chat session is nil")
-	}
+	// 1. Append new user message to existing history
+	chatSession.History = append(chatSession.History, Message{Role: "user", Content: msg})
 
-	log.Println("Sending follow-up message to Gemini, history length:", len(chatSession.History))
-
-	client, err := newClient(ctx)
+	// 2. Send full history to OpenRouter
+	aiMsg, err := sendToOpenRouter(ctx, chatSession.History)
 	if err != nil {
+		log.Println("OpenRouter SendMessage error:", err)
+		// Revert the user message addition if the API call failed so we don't skew the history
+		chatSession.History = chatSession.History[:len(chatSession.History)-1]
 		return "", err
 	}
-	defer client.Close()
 
-	// Try primary model first; fall back to fallbackModel on rate-limit.
-	// Pass existing history so the conversation context is preserved.
-	res, cs, err := tryWithModel(ctx, client, chatSession.History, primaryModel, msg)
-	if err != nil {
-		if strings.Contains(err.Error(), "429") {
-			log.Printf("Primary model (%s) rate-limited, trying fallback (%s)...", primaryModel, fallbackModel)
-			res, cs, err = tryWithModel(ctx, client, chatSession.History, fallbackModel, msg)
-		}
-		if err != nil {
-			return "", fmt.Errorf("gemini error: %w", err)
-		}
-	}
+	// 3. Append AI response to history and save
+	chatSession.History = append(chatSession.History, aiMsg)
 
-	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
-		return "", errors.New("empty response from Gemini")
-	}
-
-	// The SDK has updated cs.History via SendMessage — save it back.
 	chatsMu.Lock()
-	ChatsInfoPerUser[info] = cs
+	ChatsInfoPerUser[info] = chatSession
 	chatsMu.Unlock()
 
-	resp := string(res.Candidates[0].Content.Parts[0].(genai.Text))
-	return resp, nil
+	return aiMsg.Content, nil
 }
