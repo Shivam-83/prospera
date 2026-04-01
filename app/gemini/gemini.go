@@ -23,7 +23,7 @@ const (
 	openRouterURL   = "https://openrouter.ai/api/v1/chat/completions"
 
 	// Stable, working, and free OpenRouter model
-	primaryModel = "mistralai/mistral-7b-instruct:free"
+	primaryModel = "mistralai/mistral-7b-instruct"
 )
 
 type ChatInfo struct {
