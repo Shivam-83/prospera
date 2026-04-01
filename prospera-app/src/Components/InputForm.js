@@ -30,27 +30,14 @@ const InputForm = () => {
     }
   }, []);
 
-  const fetchLocationSuggestions = async (query) => {
-    if (!query) return;
-    try {
-      const response = await fetch(`https://api.positionstack.com/v1/forward?access_key=YOUR_ACCESS_KEY&query=${query}`);
-      const data = await response.json();
-      if (data && Array.isArray(data.data)) {
-        setSuggestedLocations(data.data.map((item) => item.name));
-      } else {
-        setSuggestedLocations([]);
-      }
-    } catch (error) {
-      console.error("Error fetching locations:", error);
-      setSuggestedLocations([]);
-    }
+  // Location autocomplete is disabled until a valid API key is configured.
+  // Users can type their location freely in the text field.
+  const fetchLocationSuggestions = (_query) => {
+    setSuggestedLocations([]);
   };
 
-  useEffect(() => {
-    if (formData.location) {
-      fetchLocationSuggestions(formData.location);
-    }
-  }, [formData.location]);
+  // Removed the broken location autocomplete effect.
+  // Uncomment and configure a valid API key to re-enable.
 
   const handleChange = (e) => {
     const { name, value } = e.target;

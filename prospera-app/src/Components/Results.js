@@ -20,9 +20,10 @@ const Results = () => {
     const [searchParams] = useSearchParams();
     const API_BASE = process.env.REACT_APP_API_URL || "https://prospera-bnny.onrender.com";
 
+    const [isLoading, setIsLoading] = useState(true);
     const [salaryData, setSalaryData] = useState({
         currentSalary: 0,
-        medianSalary: 0,
+        desiredSalary: 0,
         minSalary: 0,
         maxSalary: 0,
         jobTitle: "",
@@ -33,7 +34,7 @@ const Results = () => {
     useEffect(() => {
         const fetchSalaryData = async () => {
             const storedUserId = localStorage.getItem("userId");
-            
+
             if (!storedUserId) {
                 console.warn("userId not found in localStorage");
                 alert("Session expired. Please fill the form again.");
@@ -48,12 +49,13 @@ const Results = () => {
                 );
                 const data = response.data;
 
-                // Update state with data from the server
                 setSalaryData({
                     currentSalary: data.CurrentSalary,
-                    medianSalary: data.DesiredSalary,
-                    minSalary: data.minSalary || 45000,
-                    maxSalary: data.maxSalary || 70000,
+                    desiredSalary: data.DesiredSalary,
+                    // minSalary and maxSalary are not returned by the backend yet;
+                    // they will be 0 until the backend computes real market ranges.
+                    minSalary: data.minSalary || 0,
+                    maxSalary: data.maxSalary || 0,
                     jobTitle: data.jobTitle,
                     location: data.Location,
                     yearsExperience: data.YearsExperience,
@@ -61,12 +63,18 @@ const Results = () => {
             } catch (error) {
                 console.error("Error fetching salary data:", error);
                 if (error.response?.status === 404) {
-                    alert("Session data not found on server. Please fill the form again.");
+                    alert(
+                        "Session data not found on the server. " +
+                        "This usually happens after a server restart. " +
+                        "Please fill the form again to create a new session."
+                    );
                     localStorage.removeItem("userId");
                     window.location.href = "/input-form";
                 } else {
                     alert("Error loading salary data. Please try again.");
                 }
+            } finally {
+                setIsLoading(false);
             }
         };
 
@@ -76,10 +84,18 @@ const Results = () => {
     // Data for the salary chart
     const graphData = [
         { name: "Current", value: salaryData.currentSalary },
-        { name: "Median", value: salaryData.medianSalary },
+        { name: "Target", value: salaryData.desiredSalary },
         { name: "Min", value: salaryData.minSalary },
         { name: "Max", value: salaryData.maxSalary },
     ];
+
+    if (isLoading) {
+        return (
+            <div style={{ backgroundColor: "#ffeecd", padding: "20px", textAlign: "center", minHeight: "60vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <p style={{ fontSize: "1.2rem", color: "#696666" }}>⏳ Loading your salary data...</p>
+            </div>
+        );
+    }
 
     return (
         <div style={{ backgroundColor: "#ffeecd", padding: "20px" }}>
@@ -102,9 +118,9 @@ const Results = () => {
             <div className="salary-boxes-container">
                 {[
                     { title: "Current Salary", value: `${salaryData.currentSalary}€`, imgSrc: salary },
-                    { title: "Median Industry Salary", value: `${salaryData.medianSalary}€`, imgSrc: median },
-                    { title: "Min Industry Salary", value: `${salaryData.minSalary}€`, imgSrc: min },
-                    { title: "Max Industry Salary", value: `${salaryData.maxSalary}€`, imgSrc: max },
+                    { title: "Your Target Salary", value: `${salaryData.desiredSalary}€`, imgSrc: median },
+                    { title: "Min Industry Salary", value: salaryData.minSalary ? `${salaryData.minSalary}€` : "Ask your AI coach", imgSrc: min },
+                    { title: "Max Industry Salary", value: salaryData.maxSalary ? `${salaryData.maxSalary}€` : "Ask your AI coach", imgSrc: max },
                 ].map((item, index) => (
                     <div className="salary-box" key={index}>
                         <div className="salary-box-image">

@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"os"
 
 	"github.com/gin-contrib/cors"
@@ -21,11 +22,16 @@ func main() {
 
 	// Configure CORS
 	r.Use(cors.New(cors.Config{
-	AllowOrigins:     []string{"*"},
-	AllowMethods:     []string{"POST", "GET", "OPTIONS"},
-	AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
-	AllowCredentials: false,
-}))
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"POST", "GET", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept"},
+		AllowCredentials: false,
+	}))
+
+	// Health check — lets Render ping this endpoint to prevent cold-start sleep.
+	r.GET("/health", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
 
 	// Endpoint to store user salary info
 	r.POST("/salary/benchmark", salary.PostSalaryBenchmarkHandler)
@@ -41,6 +47,8 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+
+	log.Printf("Starting Prospera backend on port %s", port)
 
 	err := r.Run(":" + port)
 	if err != nil {

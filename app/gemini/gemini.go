@@ -4,127 +4,149 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"log"
 	"os"
+	"sync"
 
 	"github.com/google/generative-ai-go/genai"
+	"github.com/google/uuid"
 	"google.golang.org/api/option"
 )
 
 const (
 	googleApiKeyEnv = "GOOGLE_API_KEY"
-	generativeModel = "gemini-1.5-flash" // TODO: Make it configurable to the user?
+	generativeModel = "gemini-1.5-flash"
 
 	roleModel = "model"
 	roleUser  = "user"
 )
 
 type ChatInfo struct {
-	//messages []*genai.Content
 	userID    string
 	sessionID string
 }
 
-var ChatsInfoPerUser = map[ChatInfo]*genai.ChatSession{}
+// chatsMu protects ChatsInfoPerUser against concurrent WebSocket goroutines.
+var (
+	ChatsInfoPerUser = map[ChatInfo]*genai.ChatSession{}
+	chatsMu          sync.RWMutex
+)
 
 func NewChatInfo(userID string) ChatInfo {
 	chatInfo := ChatInfo{userID: userID, sessionID: uuid.NewString()}
+
+	chatsMu.Lock()
 	ChatsInfoPerUser[chatInfo] = &genai.ChatSession{}
+	chatsMu.Unlock()
 
 	return chatInfo
 }
 
 func InitiateChat(info ChatInfo, msg string) (string, error) {
 	ctx := context.Background()
-	//chat := ChatsInfoPerUser[ChatInfo{
-	//	userID:    info.userID,
-	//	sessionID: info.sessionID,
-	//}]
 
-	client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv(googleApiKeyEnv)))
+	apiKey := os.Getenv(googleApiKeyEnv)
+	if apiKey == "" {
+		return "", errors.New("GOOGLE_API_KEY environment variable is not set")
+	}
+
+	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
-		log.Fatal(err)
+		// Return error instead of log.Fatal so we don't crash the server.
+		return "", fmt.Errorf("failed to create Gemini client: %w", err)
 	}
 	defer client.Close()
 
 	model := client.GenerativeModel(generativeModel)
 	cs := model.StartChat()
 
-	// Update history with user message
 	cs.History = append(
 		cs.History,
 		&genai.Content{Parts: []genai.Part{genai.Text(msg)}, Role: roleUser},
 	)
 
-	// Send message to Gemini
 	res, err := cs.SendMessage(ctx, genai.Text(msg))
 	if err != nil {
-		// TODO not sure how to behave if there is an error, regarding the history.
-		log.Println(err)
+		log.Println("Gemini SendMessage error:", err)
+		return "", fmt.Errorf("gemini error: %w", err)
 	}
 
-	// Update history with model message
+	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
+		return "", errors.New("empty response from Gemini")
+	}
+
 	cs.History = append(
 		cs.History,
 		&genai.Content{Parts: res.Candidates[0].Content.Parts, Role: roleModel},
 	)
 
-	// Update chat session history
-	fmt.Println("BEFORE", cs)
+	chatsMu.Lock()
 	ChatsInfoPerUser[info] = cs
-	fmt.Println("AFTER", cs)
+	chatsMu.Unlock()
 
-	resp := fmt.Sprintf("%v \n", res.Candidates[0].Content.Parts[0])
+	// Use type assertion to get plain string — NOT %#v which produces Go syntax.
+	resp := string(res.Candidates[0].Content.Parts[0].(genai.Text))
 
 	return resp, nil
 }
 
 func SendMessage(ctx context.Context, info ChatInfo, msg string) (string, error) {
-	//ctx := context.Background()
+	chatsMu.RLock()
 	chatSession, ok := ChatsInfoPerUser[info]
+	chatsMu.RUnlock()
+
 	if !ok {
 		return "", errors.New("no chat session found")
 	}
 
-	if &chatSession == nil {
-		log.Println(">>>>> chatSession is nil", chatSession)
+	// Correct nil check — comparing the pointer value, not address-of-pointer.
+	if chatSession == nil {
+		log.Println("chatSession is nil for info:", info)
+		return "", errors.New("chat session is nil")
 	}
 
-	log.Println(">>>>> chat", *chatSession)
+	log.Println("Sending follow-up message to Gemini, history length:", len(chatSession.History))
 
-	client, err := genai.NewClient(ctx, option.WithAPIKey(os.Getenv(googleApiKeyEnv)))
+	apiKey := os.Getenv(googleApiKeyEnv)
+	if apiKey == "" {
+		return "", errors.New("GOOGLE_API_KEY environment variable is not set")
+	}
+
+	client, err := genai.NewClient(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
-		log.Fatal(err)
+		// Return error instead of log.Fatal so we don't crash the server.
+		return "", fmt.Errorf("failed to create Gemini client: %w", err)
 	}
 	defer client.Close()
 
 	model := client.GenerativeModel(generativeModel)
 	cs := model.StartChat()
-
 	cs.History = chatSession.History
 
 	res, err := cs.SendMessage(ctx, genai.Text(msg))
 	if err != nil {
-		// TODO not sure how to behave if there is an error, regarding the history.
-		return "", err
+		return "", fmt.Errorf("gemini error: %w", err)
 	}
 
-	fmt.Printf("%v \n", res.Candidates[0])
+	if len(res.Candidates) == 0 || len(res.Candidates[0].Content.Parts) == 0 {
+		return "", errors.New("empty response from Gemini")
+	}
+
 	chatSession.History = append(
 		chatSession.History,
 		&genai.Content{Parts: []genai.Part{genai.Text(msg)}, Role: roleUser},
 	)
-
 	chatSession.History = append(
 		chatSession.History,
 		&genai.Content{Parts: res.Candidates[0].Content.Parts, Role: roleModel},
 	)
 
+	chatsMu.Lock()
 	ChatsInfoPerUser[info] = chatSession
-	//output := printResponse(res)
+	chatsMu.Unlock()
 
-	resp := fmt.Sprintf("%#v", res.Candidates[0].Content.Parts[0])
+	// Use type assertion to get plain string — NOT %#v which produces Go syntax.
+	resp := string(res.Candidates[0].Content.Parts[0].(genai.Text))
 
-	return resp, err
+	return resp, nil
 }

@@ -2,6 +2,7 @@ package tips
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,78 +19,105 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// TipsChatWebsocketHandler is the websocket endpoint handler for negotiation chat
+// incomingMessage is the shape the frontend sends over the WebSocket.
+type incomingMessage struct {
+	Message string `json:"message"`
+}
+
+// TipsChatWebsocketHandler is the websocket endpoint handler for confidence tips chat.
 func TipsChatWebsocketHandler(c *gin.Context) {
 	userID := c.Query("userID")
-	userDetails, ok := user.SalaryInfoPerUser[userID]
-	if !ok {
-		http.Error(c.Writer, "User not found", http.StatusBadRequest)
-		return
-	}
 
-	// Upgrade HTTP request to WebSocket
+	// Upgrade FIRST — doing it before the user lookup ensures the browser
+	// receives a proper 101 and we can send a clean WS close frame on error,
+	// rather than an HTTP 400 that kills the handshake entirely.
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		http.Error(c.Writer, "Could not open websocket connection", http.StatusBadRequest)
+		log.Println("Could not upgrade to WebSocket:", err)
 		return
 	}
 	defer ws.Close()
 
-	log.Println("Tips Websocket request received", "userID=", userID)
-	log.Println("Negotiation Websocket connected")
+	log.Println("Tips WebSocket connected, userID=", userID)
 
-	intro := `Nice move! Here are some personalized negotiation 
-tips to help you make a confident impression during your salary discussion.
-Remember, good preparation and the right strategies can make all the difference. 
-Let's get you equipped for success!
-`
+	// Validate user session.
+	userDetails, ok := user.SalaryInfoPerUser[userID]
+	if !ok {
+		log.Println("Tips WS: user not found in memory, userID=", userID)
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(
+			"⚠️ Your session has expired (the server may have restarted). "+
+				"Please go back and fill in the form again to start a new session.",
+		))
+		ws.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "user not found"))
+		return
+	}
 
-	// Generate AI response
+	log.Println("Tips WebSocket ready for user:", userID)
+
+	intro := `Nice move! Here are some personalized negotiation tips to help you ` +
+		`make a confident impression during your salary discussion. ` +
+		`Remember, good preparation and the right strategies can make all the difference. ` +
+		`Let's get you equipped for success!` + "\n\n"
+
+	// Generate AI opening message.
 	chatInfo := gemini.NewChatInfo(userID)
 	aiResponse, err := gemini.InitiateChat(chatInfo, buildTipsPrompt(userDetails))
 	if err != nil {
-		http.Error(c.Writer, "Could not generate Gemini AI Response", http.StatusInternalServerError)
+		log.Println("Gemini InitiateChat error:", err)
+		_ = ws.WriteMessage(websocket.TextMessage, []byte(
+			"⚠️ Sorry, I could not reach the AI service. Please try again in a moment.",
+		))
 		return
 	}
 
 	intro += aiResponse
 
-	err = ws.WriteMessage(websocket.TextMessage, []byte(intro))
-	if err != nil {
-		http.Error(c.Writer, "Could not write message", http.StatusInternalServerError)
+	if err := ws.WriteMessage(websocket.TextMessage, []byte(intro)); err != nil {
+		log.Println("WS write error:", err)
 		return
 	}
 
+	// Message loop.
 	for {
-		// Read message from user
-		_, msg, err := ws.ReadMessage()
+		_, rawMsg, err := ws.ReadMessage()
 		if err != nil {
+			log.Println("Tips WS read closed:", err)
 			return
 		}
 
-		// Generate AI response
-		aiResponse, err := gemini.SendMessage(context.Background(), chatInfo, string(msg))
-		if err != nil {
-			http.Error(c.Writer, "Could not generate Gemini AI Response", http.StatusInternalServerError)
-			return
+		// Decode incoming JSON: { "message": "..." } — fall back to raw text.
+		var payload incomingMessage
+		if jsonErr := json.Unmarshal(rawMsg, &payload); jsonErr != nil || payload.Message == "" {
+			payload.Message = string(rawMsg)
 		}
 
-		// Write message back to WebSocket (= user)
+		log.Println("Tips WS received message from user:", userID)
+
+		aiResponse, err := gemini.SendMessage(context.Background(), chatInfo, payload.Message)
+		if err != nil {
+			log.Println("Gemini SendMessage error:", err)
+			_ = ws.WriteMessage(websocket.TextMessage, []byte(
+				"⚠️ Sorry, I encountered an error. Please try again.",
+			))
+			continue
+		}
+
 		if err := ws.WriteMessage(websocket.TextMessage, []byte(aiResponse)); err != nil {
+			log.Println("Tips WS write error:", err)
 			return
 		}
 	}
 }
 
-func buildTipsPrompt(user user.SalaryInfo) string {
+func buildTipsPrompt(u user.SalaryInfo) string {
 	tips := ""
-	tips += fmt.Sprintf("I am a %s with %d years of experience in %s.\n", user.JobTitle, user.YearsExperience, user.Industry)
-	tips += fmt.Sprintf("I am currently exploring new opportunities in %s.\n", user.Location)
-	tips += fmt.Sprintf("Currently, I earn %d, and my target salary is %d.\n", user.CurrentSalary, user.DesiredSalary)
-	tips += fmt.Sprintf("Skills: %s.\n", strings.Join(user.Skills, ", "))
-	tips += fmt.Sprintf("Education includes a major in %s, graduated with a %s.\n", user.Major, user.Diploma)
+	tips += fmt.Sprintf("I am a %s with %d years of experience in %s.\n", u.JobTitle, u.YearsExperience, u.Industry)
+	tips += fmt.Sprintf("I am currently exploring new opportunities in %s.\n", u.Location)
+	tips += fmt.Sprintf("Currently, I earn %d, and my target salary is %d.\n", u.CurrentSalary, u.DesiredSalary)
+	tips += fmt.Sprintf("Skills: %s.\n", strings.Join(u.Skills, ", "))
+	tips += fmt.Sprintf("Education includes a major in %s, graduated with a %s.\n", u.Major, u.Diploma)
 
-	// Intro and tips for negotiation, with a special section for women in tech
 	endingNote := `
 Negotiation Tips:
 1. **Know Your Worth**: Do thorough research on market salary ranges for roles like %s, especially in the %s industry, and don't hesitate to back up your ask with examples of your achievements and skills.
@@ -101,8 +129,8 @@ Confidence-Boosting Tips for Women in Tech:
 2. **Leverage a Mentor Network**: Connect with other women in tech for guidance, mentorship, and support, which can help boost both confidence and career development.
 3. **Stay Curious and Keep Learning**: Continuously upskill and stay updated with industry trends, reinforcing your confidence in your expertise and readiness for new challenges.
 
-Good luck with your negotiation journey! Believe in your value, and remember that confidence grows with every step you take in advocating for yourself. You’ve got this!
+Good luck with your negotiation journey! Believe in your value, and remember that confidence grows with every step you take in advocating for yourself. You've got this!
 `
 
-	return tips + fmt.Sprintf(endingNote, user.JobTitle, user.Industry)
+	return tips + fmt.Sprintf(endingNote, u.JobTitle, u.Industry)
 }
