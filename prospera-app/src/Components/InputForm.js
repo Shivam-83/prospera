@@ -86,7 +86,7 @@ const InputForm = () => {
 
     try {
       // Send POST request
-      const response = await axios.post("http://localhost:8080/salary/benchmark", payload, {
+      const response = await axios.post("https://prospera-bnny.onrender.com/salary/benchmark", payload, {
         headers: {
           "Content-Type": "application/json",
         },

@@ -35,7 +35,7 @@ const Results = () => {
             try {
                 const storedUserId = localStorage.getItem("userId");
                 const response = await axios.get(
-                    `http://localhost:8080/salary/benchmark?userId=${storedUserId}`
+                    `https://prospera-bnny.onrender.com/salary/benchmark?userId=${storedUserId}`
                 );
                 const data = response.data;
 

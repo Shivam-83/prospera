@@ -15,7 +15,7 @@ const ChatNegotiation = () => {
 
   useEffect(() => {
     const storedUserId = localStorage.getItem("userId");
-    const socket = new WebSocket(`ws://localhost:8080/ws/negotiation?userID=${storedUserId}`);
+    const socket = new WebSocket(`wss://prospera-bnny.onrender.com/ws/negotiation?userID=${storedUserId}`);
 
     socket.onopen = () => {
       console.log('WebSocket connected');
