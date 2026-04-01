@@ -13,6 +13,9 @@ const ChatSalary = () => {
   const [chatMessages, setChatMessages] = useState([]);
   const [ws, setWs] = useState(null);
 
+  const API_BASE = import.meta.env.VITE_API_URL || "https://prospera-bnny.onrender.com";
+  const WS_BASE = API_BASE.replace(/^http/, "ws");
+
   useEffect(() => {
     const storedUserId = localStorage.getItem("userId");
     if (!storedUserId) {
@@ -20,7 +23,11 @@ const ChatSalary = () => {
       window.location.href = "/input-form";
       return;
     }
-    const socket = new WebSocket(`wss://prospera-bnny.onrender.com/ws/salary?userID=${storedUserId}`);
+
+    const wsUrl = `${WS_BASE}/ws/salary?userID=${storedUserId}`;
+    console.log("WS URL:", wsUrl);
+
+    const socket = new WebSocket(wsUrl);
 
     socket.onopen = () => {
       console.log('WebSocket connected');

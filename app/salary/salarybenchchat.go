@@ -34,6 +34,7 @@ func SalaryChatWebsocketHandler(c *gin.Context) {
 	}
 	defer ws.Close()
 
+	log.Println("Salary Websocket request received", "userID=", userID)
 	log.Println("Salary Websocket connected")
 
 	intro := fmt.Sprintf("Hello! Congrats for checking your value on the market! " +

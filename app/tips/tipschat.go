@@ -35,6 +35,7 @@ func TipsChatWebsocketHandler(c *gin.Context) {
 	}
 	defer ws.Close()
 
+	log.Println("Tips Websocket request received", "userID=", userID)
 	log.Println("Negotiation Websocket connected")
 
 	intro := `Nice move! Here are some personalized negotiation 

@@ -96,9 +96,11 @@ const InputForm = () => {
     };
 
 
+    const API_BASE = import.meta.env.VITE_API_URL || "https://prospera-bnny.onrender.com";
+
     try {
       // Send POST request
-      const response = await axios.post("https://prospera-bnny.onrender.com/salary/benchmark", payload, {
+      const response = await axios.post(`${API_BASE}/salary/benchmark`, payload, {
         headers: {
           "Content-Type": "application/json",
         },

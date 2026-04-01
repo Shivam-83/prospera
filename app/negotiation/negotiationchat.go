@@ -33,6 +33,7 @@ func NegotiationChatWebsocketHandler(c *gin.Context) {
 	}
 	defer ws.Close()
 
+	log.Println("Negotiation Websocket request received", "userID=", userID)
 	log.Println("Negotiation Websocket connected")
 
 	// Generate AI response
