@@ -22,8 +22,8 @@ const (
 	googleApiKeyEnv = "GOOGLE_API_KEY"
 	openRouterURL   = "https://openrouter.ai/api/v1/chat/completions"
 
-	// Using the highly reliable, fully free Llama 3.3 70B model from Meta.
-	primaryModel = "meta-llama/llama-3.3-70b-instruct:free"
+	// Stable, working, and free OpenRouter model
+	primaryModel = "mistralai/mistral-7b-instruct:free"
 )
 
 type ChatInfo struct {
