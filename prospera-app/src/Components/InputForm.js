@@ -89,14 +89,13 @@ const InputForm = () => {
       Location: formData.location,
       CurrentSalary: parseInt(formData.currentSalary),
       DesiredSalary: parseInt(formData.desiredSalary),
-      Skills: formData.skills.split(",").map((skill) => skill.trim()), // Converts comma-separated string into an array
+      Skills: formData.skills.split(",").map((skill) => skill.trim()),
       Industry: formData.industry,
       Major: formData.major,
       Diploma: formData.diploma,
     };
 
-
-    const API_BASE = import.meta.env.VITE_API_URL || "https://prospera-bnny.onrender.com";
+    const API_BASE = process.env.REACT_APP_API_URL || "https://prospera-bnny.onrender.com";
 
     try {
       // Send POST request

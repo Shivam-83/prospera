@@ -13,8 +13,8 @@ const ChatSalary = () => {
   const [chatMessages, setChatMessages] = useState([]);
   const [ws, setWs] = useState(null);
 
-  const API_BASE = import.meta.env.VITE_API_URL || "https://prospera-bnny.onrender.com";
-  const WS_BASE = API_BASE.replace(/^http/, "ws");
+  const API_BASE = process.env.REACT_APP_API_URL || "https://prospera-bnny.onrender.com";
+  const WS_BASE = API_BASE.replace("https://", "wss://").replace("http://", "ws://");
 
   useEffect(() => {
     const storedUserId = localStorage.getItem("userId");
