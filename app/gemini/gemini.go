@@ -22,8 +22,8 @@ const (
 	googleApiKeyEnv = "GOOGLE_API_KEY"
 	openRouterURL   = "https://openrouter.ai/api/v1/chat/completions"
 
-	// OpenRouter completely free routing for Gemini models.
-	primaryModel = "google/gemini-2.0-flash-lite-preview-02-05:free"
+	// Using the highly reliable, fully free Llama 3.3 70B model from Meta.
+	primaryModel = "meta-llama/llama-3.3-70b-instruct:free"
 )
 
 type ChatInfo struct {
