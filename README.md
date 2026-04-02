@@ -21,12 +21,21 @@ Prospera is an AI-driven application designed to help women confidently negotiat
 ---
 ## **Prerequisites**
 
-To get started with Prospera, make sure you have the following installed:
+To get started with Prospera, make sure you have the following installed based on how you want to run the application:
 
-1. **Docker**: Get Docker
-2. **Docker Compose**: Verify with `docker-compose --version` (Docker Compose is included with Docker Desktop)
-3. **Make**: Installing Make
-4. **Google API Key**: Have a [Google API Key](https://aistudio.google.com/app/apikey) and add it to the `.env` file (see below).
+**For all setups:**
+1. **Google API Key**: Have an [OpenRouter API Key](https://openrouter.ai/) ready to add it to the `.env` file (see below).
+2. **Make**: (Optional but recommended) Useful for running automated commands.
+
+**Option A: Running with Docker (Easiest)**
+1. **Docker**: [Get Docker](https://docs.docker.com/get-docker/)
+2. **Docker Compose**: Verify with `docker-compose --version`
+
+**Option B: Running Locally (For live development/changes)**
+1. **Go (Golang)**: Version 1.23 or newer. [Download Go](https://go.dev/dl/)
+2. **Node.js**: Version 18 or newer. [Download Node.js](https://nodejs.org/en)
+
+
 
 ## **Installation and Setup**
 
@@ -35,7 +44,7 @@ To get started with Prospera, make sure you have the following installed:
 Clone the repository and navigate into the project directory:
 
 ```bash
-git clone https://github.com/doniacld/prospera.git
+git clone https://github.com/Shivam-83/prospera.git
 cd prospera
 ```
 
@@ -49,12 +58,20 @@ Prospera requires specific environment variables for API keys and configuration.
     cp .env.example .env
     ```
 
-2. Open `.env` and configure the required values:
+2. Open `.env` and add your OpenRouter (Google API) key:
     ```
-    API_KEY=your_google_api_key_here
-    ANOTHER_VARIABLE=another_value
+    GOOGLE_API_KEY=your-api-key-here
     ```
 
+    You can obtain an API key from [OpenRouter](https://openrouter.ai/).
+
+3. Create the frontend `.env` file in the `prospera-app` directory:
+    
+    ```bash
+    cd prospera-app
+    echo "REACT_APP_API_URL=http://localhost:8080" > .env
+    cd ..
+    ```
 
 ### 3. Running Prospera
 
@@ -72,23 +89,33 @@ To stop the containers:
 make docker-down
 ```
 
-### Option B: Run Locally Without Docker
+### Option B: Run Locally Without Docker (Go & Node.js required)
 
-To run each service locally, you can use the following commands:
+If you are developing locally without Docker, you need to install the dependencies for the frontend first.
 
-1. **Start the Backend**:
+1. **Install Frontend Dependencies**:
+    
+    ```bash
+    cd prospera-app
+    npm install
+    cd ..
+    ```
+
+2. **Start the Backend**:
 
     ```bash
     make run-backend
     ```
+    *(If you don't have Make installed, you can simply run `cd app && go run main.go`)*
 
-2. **Start the Frontend**:
+3. **Start the Frontend**:
 
     ```bash
     make run-frontend
     ```
+    *(If you don't have Make installed, you can simply run `cd prospera-app && npm start`)*
 
-3. **Stopping Services Locally**:
+4. **Stopping Services Locally**:
 
     ```bash
     make kill-local
